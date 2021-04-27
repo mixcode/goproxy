@@ -47,25 +47,14 @@ type ConnectAction struct {
 }
 
 func stripPort(s string) string {
-	var ix int
-	if strings.Contains(s, "[") && strings.Contains(s, "]") {
-		//ipv6 : for example : [2606:4700:4700::1111]:443
+	ix := strings.IndexRune(s, ']') // "[IPv6:ADDR::SPEC]:port"
+	if ix > -1 {
+		return s[:ix+1]
+	}
 
-		//strip '[' and ']'
-		s = strings.ReplaceAll(s, "[", "")
-		s = strings.ReplaceAll(s, "]", "")
-
-		ix = strings.LastIndexAny(s, ":")
-		if ix == -1 {
-			return s
-		}
-	} else {
-		//ipv4
-		ix = strings.IndexRune(s, ':')
-		if ix == -1 {
-			return s
-		}
-
+	ix = strings.IndexRune(s, ':') // "IPv4.AD.DR.SPEC:port"
+	if ix == -1 {
+		return s
 	}
 	return s[:ix]
 }
@@ -133,7 +122,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 			return
 		}
 		ctx.Logf("Accepting CONNECT to %s", host)
-		proxyClient.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
+		proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 		targetTCP, targetOK := targetSiteCon.(halfClosable)
 		proxyClientTCP, clientOK := proxyClient.(halfClosable)

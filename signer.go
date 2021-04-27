@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	certDurationDays = 365	// valid period of self-signed certs from today, in days
+	certDurationDays = 365 // valid period of self-signed certs from today, in days
 )
 
 func hashSorted(lst []string) []byte {

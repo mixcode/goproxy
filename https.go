@@ -47,7 +47,12 @@ type ConnectAction struct {
 }
 
 func stripPort(s string) string {
-	ix := strings.IndexRune(s, ':')
+	ix := strings.IndexRune(s, ']') // "[IPv6:ADDR::SPEC]:port"
+	if ix > -1 {
+		return s[:ix+1]
+	}
+
+	ix = strings.IndexRune(s, ':') // "IPv4.AD.DR.SPEC:port"
 	if ix == -1 {
 		return s
 	}

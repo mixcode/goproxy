@@ -18,6 +18,10 @@ import (
 	"time"
 )
 
+var (
+	certDurationDays = 365	// valid period of self-signed certs from today, in days
+)
+
 func hashSorted(lst []string) []byte {
 	c := make([]string, len(lst))
 	copy(c, lst)
@@ -44,11 +48,11 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 	if x509ca, err = x509.ParseCertificate(ca.Certificate[0]); err != nil {
 		return
 	}
-	start := time.Unix(0, 0)
-	end, err := time.Parse("2006-01-02", "2049-12-31")
-	if err != nil {
-		panic(err)
-	}
+
+	// Set valid time range of the cert to a limited range of time
+	now := time.Now()
+	start := now.AddDate(0, 0, -certDurationDays)
+	end := now.AddDate(0, 0, certDurationDays)
 
 	serial := big.NewInt(rand.Int63())
 	template := x509.Certificate{

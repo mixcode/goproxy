@@ -1,3 +1,12 @@
+# DISCLAIMER
+
+This registry is a clone of elazarl's awesome https://gitter.im/elazarl/goproxy . I cloned the repository to fix up TLS SNI based self-signed cert functionality, for MITM-style HTTP capturing, for my own use.
+
+Below is the original README.md from elazarl's original goproxy repo.
+
+
+---
+
 # Introduction
 
 [![GoDoc](https://godoc.org/github.com/elazarl/goproxy?status.svg)](https://godoc.org/github.com/elazarl/goproxy)

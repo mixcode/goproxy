@@ -230,13 +230,13 @@ func (pcond *ReqProxyConds) Do(h ReqHandler) {
 //	proxy.OnRequest().HandleConnect(goproxy.AlwaysReject) // rejects all CONNECT requests
 func (pcond *ReqProxyConds) HandleConnect(h HttpsHandler) {
 	pcond.proxy.httpsHandlers = append(pcond.proxy.httpsHandlers,
-		FuncHttpsHandler(func(host string, ctx *ProxyCtx) (*ConnectAction, string) {
+		FuncHttpsHandler(func(host string, proxyCtx *ProxyCtx) (*ConnectAction, string) {
 			for _, cond := range pcond.reqConds {
-				if !cond.HandleReq(ctx.Req, ctx) {
+				if !cond.HandleReq(proxyCtx.Req, proxyCtx) {
 					return nil, ""
 				}
 			}
-			return h.HandleConnect(host, ctx)
+			return h.HandleHttpConnect(host, proxyCtx)
 		}))
 }
 
@@ -258,9 +258,9 @@ func (pcond *ReqProxyConds) HandleConnectFunc(f func(host string, ctx *ProxyCtx)
 
 func (pcond *ReqProxyConds) HijackConnect(f func(req *http.Request, client net.Conn, ctx *ProxyCtx)) {
 	pcond.proxy.httpsHandlers = append(pcond.proxy.httpsHandlers,
-		FuncHttpsHandler(func(host string, ctx *ProxyCtx) (*ConnectAction, string) {
+		FuncHttpsHandler(func(host string, proxyCtx *ProxyCtx) (*ConnectAction, string) {
 			for _, cond := range pcond.reqConds {
-				if !cond.HandleReq(ctx.Req, ctx) {
+				if !cond.HandleReq(proxyCtx.Req, proxyCtx) {
 					return nil, ""
 				}
 			}

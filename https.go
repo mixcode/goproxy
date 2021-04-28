@@ -2,6 +2,7 @@ package goproxy
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -60,8 +61,8 @@ func stripPort(s string) string {
 }
 
 func (proxy *ProxyHttpServer) dial(network, addr string) (c net.Conn, err error) {
-	if proxy.Tr.Dial != nil {
-		return proxy.Tr.Dial(network, addr)
+	if proxy.Tr.DialContext != nil {
+		return proxy.Tr.DialContext(context.Background(), network, addr)
 	}
 	return net.Dial(network, addr)
 }
@@ -87,30 +88,33 @@ type halfClosable interface {
 var _ halfClosable = (*net.TCPConn)(nil)
 
 func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request) {
-	ctx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, certStore: proxy.CertStore}
+	proxyCtx := &ProxyCtx{Req: r, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, certStore: proxy.CertStore}
 
+	// Hijack open client connection to directly stream data
 	hij, ok := w.(http.Hijacker)
 	if !ok {
 		panic("httpserver does not support hijacking")
 	}
 
-	proxyClient, _, e := hij.Hijack()
+	proxyResponseWriter, _, e := hij.Hijack()
 	if e != nil {
 		panic("Cannot hijack connection " + e.Error())
 	}
 
-	ctx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
+	// Find an appreciate connect handler
+	proxyCtx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
 	todo, host := OkConnect, r.URL.Host
 	for i, h := range proxy.httpsHandlers {
-		newtodo, newhost := h.HandleConnect(host, ctx)
+		newtodo, newhost := h.HandleHttpConnect(host, proxyCtx)
 
 		// If found a result, break the loop immediately
 		if newtodo != nil {
 			todo, host = newtodo, newhost
-			ctx.Logf("on %dth handler: %v %s", i, todo, host)
+			proxyCtx.Logf("on %dth handler: %v %s", i, todo, host)
 			break
 		}
 	}
+
 	switch todo.Action {
 	case ConnectAccept:
 		if !hasPort.MatchString(host) {
@@ -118,72 +122,74 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		}
 		targetSiteCon, err := proxy.connectDial(ctx, "tcp", host)
 		if err != nil {
-			httpError(proxyClient, ctx, err)
+			httpError(proxyResponseWriter, proxyCtx, err)
 			return
 		}
-		ctx.Logf("Accepting CONNECT to %s", host)
-		proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
+		proxyCtx.Logf("Accepting CONNECT to %s", host)
+		proxyResponseWriter.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 
 		targetTCP, targetOK := targetSiteCon.(halfClosable)
-		proxyClientTCP, clientOK := proxyClient.(halfClosable)
+		proxyClientTCP, clientOK := proxyResponseWriter.(halfClosable)
 		if targetOK && clientOK {
-			go copyAndClose(ctx, targetTCP, proxyClientTCP)
-			go copyAndClose(ctx, proxyClientTCP, targetTCP)
+			go copyAndClose(proxyCtx, targetTCP, proxyClientTCP)
+			go copyAndClose(proxyCtx, proxyClientTCP, targetTCP)
 		} else {
 			go func() {
 				var wg sync.WaitGroup
 				wg.Add(2)
-				go copyOrWarn(ctx, targetSiteCon, proxyClient, &wg)
-				go copyOrWarn(ctx, proxyClient, targetSiteCon, &wg)
+				go copyOrWarn(proxyCtx, targetSiteCon, proxyResponseWriter, &wg)
+				go copyOrWarn(proxyCtx, proxyResponseWriter, targetSiteCon, &wg)
 				wg.Wait()
-				proxyClient.Close()
+				proxyResponseWriter.Close()
 				targetSiteCon.Close()
 
 			}()
 		}
 
 	case ConnectHijack:
-		todo.Hijack(r, proxyClient, ctx)
+		todo.Hijack(r, proxyResponseWriter, proxyCtx)
+
 	case ConnectHTTPMitm:
-		proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-		ctx.Logf("Assuming CONNECT is plain HTTP tunneling, mitm proxying it")
-		targetSiteCon, err := proxy.connectDial(ctx, "tcp", host)
+		proxyResponseWriter.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
+		proxyCtx.Logf("Assuming CONNECT is plain HTTP tunneling, mitm proxying it")
+		targetSiteCon, err := proxy.connectDial("tcp", host)
 		if err != nil {
-			ctx.Warnf("Error dialing to %s: %s", host, err.Error())
+			proxyCtx.Warnf("Error dialing to %s: %s", host, err.Error())
 			return
 		}
 		for {
-			client := bufio.NewReader(proxyClient)
+			client := bufio.NewReader(proxyResponseWriter)
 			remote := bufio.NewReader(targetSiteCon)
 			req, err := http.ReadRequest(client)
 			if err != nil && err != io.EOF {
-				ctx.Warnf("cannot read request of MITM HTTP client: %+#v", err)
+				proxyCtx.Warnf("cannot read request of MITM HTTP client: %+#v", err)
 			}
 			if err != nil {
 				return
 			}
-			req, resp := proxy.filterRequest(req, ctx)
+			req, resp := proxy.filterRequest(req, proxyCtx)
 			if resp == nil {
 				if err := req.Write(targetSiteCon); err != nil {
-					httpError(proxyClient, ctx, err)
+					httpError(proxyResponseWriter, proxyCtx, err)
 					return
 				}
 				resp, err = http.ReadResponse(remote, req)
 				if err != nil {
-					httpError(proxyClient, ctx, err)
+					httpError(proxyResponseWriter, proxyCtx, err)
 					return
 				}
 				defer resp.Body.Close()
 			}
-			resp = proxy.filterResponse(resp, ctx)
-			if err := resp.Write(proxyClient); err != nil {
-				httpError(proxyClient, ctx, err)
+			resp = proxy.filterResponse(resp, proxyCtx)
+			if err := resp.Write(proxyResponseWriter); err != nil {
+				httpError(proxyResponseWriter, proxyCtx, err)
 				return
 			}
 		}
+
 	case ConnectMitm:
-		proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-		ctx.Logf("Assuming CONNECT is TLS, mitm proxying it")
+		proxyResponseWriter.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
+		proxyCtx.Logf("Assuming CONNECT is TLS, mitm proxying it")
 		// this goes in a separate goroutine, so that the net/http server won't think we're
 		// still handling the request even after hijacking the connection. Those HTTP CONNECT
 		// request can take forever, and the server will be stuck when "closed".
@@ -191,33 +197,37 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 		tlsConfig := defaultTLSConfig
 		if todo.TLSConfig != nil {
 			var err error
-			tlsConfig, err = todo.TLSConfig(host, ctx)
+			tlsConfig, err = todo.TLSConfig(host, proxyCtx)
 			if err != nil {
-				httpError(proxyClient, ctx, err)
+				httpError(proxyResponseWriter, proxyCtx, err)
 				return
 			}
 		}
 		go func() {
 			//TODO: cache connections to the remote website
-			rawClientTls := tls.Server(proxyClient, tlsConfig)
+
+			// Create a TLS server toward client
+			rawClientTls := tls.Server(proxyResponseWriter, tlsConfig)
 			if err := rawClientTls.Handshake(); err != nil {
-				ctx.Warnf("Cannot handshake client %v %v", r.Host, err)
+				proxyCtx.Warnf("Cannot handshake client %v %v", r.Host, err)
 				return
 			}
 			defer rawClientTls.Close()
 			clientTlsReader := bufio.NewReader(rawClientTls)
 			for !isEof(clientTlsReader) {
 				req, err := http.ReadRequest(clientTlsReader)
-				var ctx = &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, UserData: ctx.UserData}
 				if err != nil && err != io.EOF {
 					return
 				}
+
+				localProxyCtx := &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, UserData: proxyCtx.UserData}
+
 				if err != nil {
-					ctx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
+					localProxyCtx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
 					return
 				}
 				req.RemoteAddr = r.RemoteAddr // since we're converting the request, need to carry over the original connecting IP as well
-				ctx.Logf("req %v", r.Host)
+				localProxyCtx.Logf("req %v (%s)", r.Host, req.Host)
 
 				if !httpsRegexp.MatchString(req.URL.String()) {
 					req.URL, err = url.Parse("https://" + r.Host + req.URL.String())
@@ -225,38 +235,44 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 
 				// Bug fix which goproxy fails to provide request
 				// information URL in the context when does HTTPS MITM
-				ctx.Req = req
+				localProxyCtx.Req = req
 
-				req, resp := proxy.filterRequest(req, ctx)
+				// do pre-request filterings
+				req, resp := proxy.filterRequest(req, localProxyCtx)
+
+				// run the request
 				if resp == nil {
 					if isWebSocketRequest(req) {
-						ctx.Logf("Request looks like websocket upgrade.")
-						proxy.serveWebsocketTLS(ctx, w, req, tlsConfig, rawClientTls)
+						localProxyCtx.Logf("Request looks like websocket upgrade.")
+						proxy.serveWebsocketTLS(localProxyCtx, w, req, tlsConfig, rawClientTls)
 						return
 					}
 					if err != nil {
-						ctx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
+						localProxyCtx.Warnf("Illegal URL %s", "https://"+r.Host+req.URL.Path)
 						return
 					}
-					removeProxyHeaders(ctx, req)
-					resp, err = ctx.RoundTrip(req)
+					removeProxyHeaders(localProxyCtx, req)
+					resp, err = localProxyCtx.RoundTrip(req)
 					if err != nil {
-						ctx.Warnf("Cannot read TLS response from mitm'd server %v", err)
+						localProxyCtx.Warnf("Cannot read TLS response from mitm'd server %v", err)
 						return
 					}
-					ctx.Logf("resp %v", resp.Status)
+					localProxyCtx.Logf("resp %v", resp.Status)
 				}
-				resp = proxy.filterResponse(resp, ctx)
+
+				// do post-request filterings
+				resp = proxy.filterResponse(resp, localProxyCtx)
 				defer resp.Body.Close()
 
+				// Write http response to client
 				text := resp.Status
 				statusCode := strconv.Itoa(resp.StatusCode) + " "
 				if strings.HasPrefix(text, statusCode) {
 					text = text[len(statusCode):]
 				}
 				// always use 1.1 to support chunked encoding
-				if _, err := io.WriteString(rawClientTls, "HTTP/1.1"+" "+statusCode+text+"\r\n"); err != nil {
-					ctx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v", err)
+				if _, err = io.WriteString(rawClientTls, "HTTP/1.1"+" "+statusCode+text+"\r\n"); err != nil {
+					localProxyCtx.Warnf("Cannot write TLS response HTTP status from mitm'd client: %v", err)
 					return
 				}
 
@@ -268,9 +284,10 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					resp.Header.Del("Content-Length")
 					resp.Header.Set("Transfer-Encoding", "chunked")
 				}
+
 				// Force connection close otherwise chrome will keep CONNECT tunnel open forever
 				resp.Header.Set("Connection", "close")
-				if err := resp.Header.Write(rawClientTls); err != nil {
+				if err = resp.Header.Write(rawClientTls); err != nil {
 					ctx.Warnf("Cannot write TLS response header from mitm'd client: %v", err)
 					return
 				}
@@ -296,19 +313,25 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 						return
 					}
 				}
+
+				if err != nil {
+					return
+				}
 			}
-			ctx.Logf("Exiting on EOF")
+			proxyCtx.Logf("Exiting on EOF")
 		}()
+
 	case ConnectProxyAuthHijack:
-		proxyClient.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n"))
-		todo.Hijack(r, proxyClient, ctx)
+		proxyResponseWriter.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n"))
+		todo.Hijack(r, proxyResponseWriter, proxyCtx)
+
 	case ConnectReject:
-		if ctx.Resp != nil {
-			if err := ctx.Resp.Write(proxyClient); err != nil {
-				ctx.Warnf("Cannot write response that reject http CONNECT: %v", err)
+		if proxyCtx.Resp != nil {
+			if err := proxyCtx.Resp.Write(proxyResponseWriter); err != nil {
+				proxyCtx.Warnf("Cannot write response that reject http CONNECT: %v", err)
 			}
 		}
-		proxyClient.Close()
+		proxyResponseWriter.Close()
 	}
 }
 
@@ -358,7 +381,7 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 		return nil
 	}
 	if u.Scheme == "" || u.Scheme == "http" {
-		if strings.IndexRune(u.Host, ':') == -1 {
+		if !hasPort.MatchString(u.Host) {
 			u.Host += ":80"
 		}
 		return func(network, addr string) (net.Conn, error) {
@@ -398,7 +421,7 @@ func (proxy *ProxyHttpServer) NewConnectDialToProxyWithHandler(https_proxy strin
 		}
 	}
 	if u.Scheme == "https" || u.Scheme == "wss" {
-		if strings.IndexRune(u.Host, ':') == -1 {
+		if !hasPort.MatchString(u.Host) {
 			u.Host += ":443"
 		}
 		return func(network, addr string) (net.Conn, error) {

@@ -29,11 +29,13 @@ func hashSorted(lst []string) []byte {
 	return h.Sum(nil)
 }
 
+/*
 func hashSortedBigInt(lst []string) *big.Int {
 	rv := new(big.Int)
 	rv.SetBytes(hashSorted(lst))
 	return rv
 }
+*/
 
 var goproxySignerVersion = ":goroxy1"
 
@@ -90,6 +92,7 @@ func signHost(ca tls.Certificate, hosts []string) (cert *tls.Certificate, err er
 		}
 	default:
 		err = fmt.Errorf("unsupported key type %T", ca.PrivateKey)
+		return
 	}
 
 	var derBytes []byte

@@ -28,7 +28,7 @@ import (
 
 var acceptAllCerts = &tls.Config{InsecureSkipVerify: true}
 
-var noProxyClient = &http.Client{Transport: &http.Transport{TLSClientConfig: acceptAllCerts}}
+//var noProxyClient = &http.Client{Transport: &http.Transport{TLSClientConfig: acceptAllCerts}}
 
 var https = httptest.NewTLSServer(nil)
 var srv = httptest.NewServer(nil)
@@ -76,7 +76,8 @@ func getOrFail(url string, client *http.Client, t *testing.T) []byte {
 }
 
 func localFile(url string) string { return fs.URL + "/" + url }
-func localTls(url string) string  { return https.URL + url }
+
+//func localTls(url string) string  { return https.URL + url }
 
 func TestSimpleHttpReqWithProxy(t *testing.T) {
 	client, s := oneShotProxy(goproxy.NewProxyHttpServer(), t)
@@ -234,6 +235,7 @@ func getImage(file string, t *testing.T) image.Image {
 	return img
 }
 
+/*
 func readAll(r io.Reader, t *testing.T) []byte {
 	b, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -248,6 +250,8 @@ func readFile(file string, t *testing.T) []byte {
 	}
 	return b
 }
+*/
+
 func fatalOnErr(err error, msg string, t *testing.T) {
 	if err != nil {
 		t.Fatal(msg, err)
@@ -490,6 +494,7 @@ func TestFirstHandlerMatches(t *testing.T) {
 	}
 }
 
+/*
 func constantHttpServer(content []byte) (addr string) {
 	l, err := net.Listen("tcp", "localhost:0")
 	panicOnErr(err, "listen")
@@ -505,6 +510,7 @@ func constantHttpServer(content []byte) (addr string) {
 	}()
 	return l.Addr().String()
 }
+*/
 
 func TestIcyResponse(t *testing.T) {
 	// TODO: fix this test
@@ -954,14 +960,14 @@ func TestSimpleHttpRequest(t *testing.T) {
 	if err != nil || resp.StatusCode != 200 {
 		t.Error("Error while requesting google with http", err)
 	}
-	resp, err = client.Get("http://google20012312031.de")
+	resp, _ = client.Get("http://google20012312031.de")
 	fmt.Println(resp)
 	if resp == nil {
 		t.Error("Error while requesting random string with http", resp)
 	}
 	proxy.OnResponse(goproxy.UrlMatches(regexp.MustCompile(".*"))).DoFunc(returnNil)
 
-	resp, err = client.Get("http://google20012312031.de")
+	resp, _ = client.Get("http://google20012312031.de")
 	fmt.Println(resp)
 	if resp == nil {
 		t.Error("Error while requesting random string with http", resp)

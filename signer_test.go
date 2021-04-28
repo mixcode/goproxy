@@ -62,7 +62,7 @@ func testSignerTls(t *testing.T, ca tls.Certificate) {
 	server := httptest.NewUnstartedServer(ConstantHanlder(expected))
 	defer server.Close()
 	server.TLS = &tls.Config{Certificates: []tls.Certificate{*cert, ca}}
-	server.TLS.BuildNameToCertificate()
+	//server.TLS.BuildNameToCertificate()
 	server.StartTLS()
 	certpool := x509.NewCertPool()
 	certpool.AddCert(ca.Leaf)

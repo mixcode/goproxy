@@ -460,6 +460,7 @@ func TestConnectHandler(t *testing.T) {
 func TestMitmIsFiltered(t *testing.T) {
 	proxy := goproxy.NewProxyHttpServer()
 	//proxy.Verbose = true
+	//proxy.Verbose = LOGLEVEL_VERBOSE
 	proxy.OnRequest(goproxy.ReqHostIs(https.Listener.Addr().String())).HandleConnect(goproxy.AlwaysMitm)
 	proxy.OnRequest(goproxy.UrlIs("/momo")).DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		return nil, goproxy.TextResponse(req, "koko")
@@ -516,7 +517,8 @@ func TestIcyResponse(t *testing.T) {
 	// TODO: fix this test
 	/*s := constantHttpServer([]byte("ICY 200 OK\r\n\r\nblablabla"))
 	proxy := goproxy.NewProxyHttpServer()
-	proxy.Verbose = true
+	//proxy.Verbose = true
+	proxy.Verbose = LOGLEVEL_VERBOSE
 	_, l := oneShotProxy(proxy, t)
 	defer l.Close()
 	req, err := http.NewRequest("GET", "http://"+s, nil)

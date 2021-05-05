@@ -11,6 +11,14 @@ import (
 	"sync/atomic"
 )
 
+type LogLevel int
+
+const (
+	LOGLEVEL_NONE LogLevel = iota
+	LOGLEVEL_WARN
+	LOGLEVEL_VERBOSE
+)
+
 // The basic proxy type. Implements http.Handler.
 type ProxyHttpServer struct {
 	// session variable must be aligned in i386
@@ -19,7 +27,7 @@ type ProxyHttpServer struct {
 	// KeepDestinationHeaders indicates the proxy should retain any headers present in the http.Response before proxying
 	KeepDestinationHeaders bool
 	// setting Verbose to true will log information on each request sent to the proxy
-	Verbose         bool
+	Verbose         LogLevel
 	Logger          Logger
 	NonproxyHandler http.Handler
 	reqHandlers     []ReqHandler

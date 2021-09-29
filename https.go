@@ -90,6 +90,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 	// Find an appreciate connect handler
 	proxyCtx.Logf("Running %d CONNECT handlers", len(proxy.httpsHandlers))
 	todo, host := OkConnect, r.URL.Host
+	proxyCtx.Host = host
 	for i, h := range proxy.httpsHandlers {
 		newtodo, newhost := h.HandleHttpConnect(host, proxyCtx)
 
@@ -139,6 +140,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 	case ConnectHTTPMitm:
 		proxyResponseWriter.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 		proxyCtx.Logf("Assuming CONNECT is plain HTTP tunneling, mitm proxying it")
+		proxyCtx.Host = host
 		targetSiteCon, err := proxy.connectDial("tcp", host)
 		if err != nil {
 			proxyCtx.Warnf("Error dialing to %s: %s", host, err.Error())
@@ -208,7 +210,7 @@ func (proxy *ProxyHttpServer) handleHttps(w http.ResponseWriter, r *http.Request
 					return
 				}
 
-				localProxyCtx := &ProxyCtx{Req: req, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, UserData: proxyCtx.UserData}
+				localProxyCtx := &ProxyCtx{Host: r.Host, Req: req, Session: atomic.AddInt64(&proxy.sess, 1), Proxy: proxy, UserData: proxyCtx.UserData}
 
 				if err != nil {
 					localProxyCtx.Warnf("Cannot read TLS request from mitm'd client %v %v", r.Host, err)
